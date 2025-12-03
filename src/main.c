@@ -3,6 +3,7 @@
 // #include "../src/muUtils.h"
 // #include "../src/muVS1053b.h"
 #include "../src/fao_lib.h"
+#include "../src/timer.h"
 
 #define BA_FAO_FILE "ba_memtext.fao"
 #define BA_MP3_FILE "ba.mp3"
@@ -14,8 +15,6 @@ char g_base_dir[256]={0};
 
 
 int main(int argc, char *argv[]) {
-
-    // uint8_t old_mmu_ctrl = PEEK(MMU_MEM_CTRL);
         
     char *last_slash = strrchr(argv[0], '/');
     if (last_slash != NULL) {
@@ -58,7 +57,7 @@ int main(int argc, char *argv[]) {
 
         return -1; // Invalid file format
     }
-
+    setTimer0();
     while (readFAOChunkHeader(fao, &chunkHeader) == 1) {
         int result = 0;
         switch (chunkHeader.chunkType) {
@@ -66,6 +65,10 @@ int main(int argc, char *argv[]) {
                 result = processFrameStart(&chunkHeader);
                 break;
             case 0xFF:
+                // using timer0 instead of polling timer1, hard-coded to 10 fps
+                while(!isTimerDone())
+                    ;
+                setTimer0();
                 result = processFrameEnd(&chunkHeader);
                 POKE(VKY_MSTR_CTRL_1, 0x40); // ENABLE MEMTEXT OVERRIDE BLOCK MODE 
                 break;
@@ -120,6 +123,7 @@ int main(int argc, char *argv[]) {
             getchar();
             return -1; // Error processing chunk
         }
+
     }
     fclose(fao);
     return 0; // Success

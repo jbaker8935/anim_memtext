@@ -390,9 +390,7 @@ int processTextRLEFrameCharacter(FILE *f, FAOChunkHeader *ch) {
     }
 
     decodeRLEFrame(ch->chunkLength, ch->chunkID, (uint8_t *) 0x8000);
-    // Restore default MMU banks to avoid corrupting stack
-    POKE(MMU_MEM_BANK_4, 4);
-    POKE(MMU_MEM_BANK_5, 5);
+
     return 0;
 }
 
@@ -411,9 +409,7 @@ int processTextRLEFrameColor(FILE *f, FAOChunkHeader *ch) {
     }
 
     decodeRLEFrame(ch->chunkLength, ch->chunkID, (uint8_t *) 0x8000);
-    // Restore default MMU banks to avoid corrupting stack
-    POKE(MMU_MEM_BANK_4, 4);
-    POKE(MMU_MEM_BANK_5, 5);
+
     return 0;
 }
 #pragma clang optimize on
