@@ -11,47 +11,6 @@ FAOHeader header;
 FAOChunkHeader chunkHeader;
 char filename[256]={0};
 char g_base_dir[256]={0};
-extern uint8_t displayed_page;
-
-#pragma clang optimize off
-void debugMemTextChunk() {
-    // Switch to Block Text Mode
-    // Print chunkHeader.chunkID
-    // Print displayed page
-    // Wait for key press
-    POKE(VKY_MSTR_CTRL_1, 0x00); // DISABLE MEMTEXT 
-    textGotoXY(0,0);
-    textPrint("Chunk ID:");
-    textGotoXY(10,0);
-    textPrintUInt(chunkHeader.chunkID);
-    textGotoXY(0,1);
-    textPrint("Displayed Page:");
-    textGotoXY(18,1);
-    textPrintUInt(displayed_page);
-    getchar();
-    // update MEMTEXT pointers to point to inactive page
-    POKE(0xD304, (displayed_page == 1) ? 0x00 : 0x00); // low byte
-    POKE(0xD305, (displayed_page == 1) ? 0x00 : 0x80); // mid byte
-    POKE(0xD306, 0x01); // high byte
-    POKE(0xD308, (displayed_page == 1) ? 0x00 : 0x00); // low byte
-    POKE(0xD309, (displayed_page == 1) ? 0x40 : 0xc0); // mid byte
-    POKE(0xD30A, 0x01); // high byte
-    // switch back to memtext mode
-    POKE(VKY_MSTR_CTRL_1, 0x40); // ENABLE MEMTEXT OVERRIDE BLOCK MODE
-    // wait for key press
-    getchar();
-    // update MEMTEXT pointers to point to active page
-    // wait for key press
-    POKE(0xD304, (displayed_page == 0) ? 0x00 : 0x00); // low byte
-    POKE(0xD305, (displayed_page == 0) ? 0x00 : 0x80); // mid byte
-    POKE(0xD306, 0x01); // high byte
-    POKE(0xD308, (displayed_page == 0) ? 0x00 : 0x00); // low byte
-    POKE(0xD309, (displayed_page == 0) ? 0x40 : 0xc0); // mid byte
-    POKE(0xD30A, 0x01); // high byte 
-    getchar();   
-}
-#pragma clang optimize on
-
 int main(int argc, char *argv[]) {
 
     // uint8_t old_mmu_ctrl = PEEK(MMU_MEM_CTRL);

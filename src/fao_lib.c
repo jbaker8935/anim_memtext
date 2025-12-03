@@ -122,8 +122,10 @@ encoding is 4800 bytes per frame.
 - Chunk Data: 8 bytes Tile Set Map + Columns x Rows 2 byte Tile Map entries
 */
 extern FAOHeader header; // from main.c
+#define CHUNK_BUFFER_SIZE 4096
+
 __attribute__((aligned(2)))
-uint8_t buf2048[2048];
+static uint8_t chunk_buffer[CHUNK_BUFFER_SIZE];
 
 // use MMU for MEMTEXT
 // enable MMU edit mode by setting MMU Memory control to $b3
@@ -154,99 +156,47 @@ uint8_t buf2048[2048];
 // At the end of the frame, the MEMTEXT addresses are swapped to point
 // to the newly updated page and the displayed_page variable is updated.
 
-uint8_t displayed_page = 0; // which MEMTEXT page is currently being displayed
+volatile uint8_t displayed_page = 0; // which MEMTEXT page is currently being displayed
 
-// Pre-calculated chunk base addresses to avoid multiplication
-static uint8_t *chunk_bases[4] = {
-    (uint8_t *)0x8000,
-    (uint8_t *)0x8000 + 2400,
-    (uint8_t *)0x8000 + 4800,
-    (uint8_t *)0x8000 + 7200
-};
+// Chunk offsets from base address 0x8000
+#define CHUNK_SIZE 2400
+#define MEMTEXT_BASE 0x8000
 
-void far_mvn(uint32_t dest, uint32_t src, uint16_t count);
-// far_mvn implementation
-// dest: A,X, __rc2   __rc3 unused
-// src: __rc4, __rc5, __rc6    __rc7 unused
-// count: __rc8, __rc9
+// __attribute__((noinline, leaf))
+// void near_mvn(char* dest, char* src, uint16_t count);
+// // near_mvn implementation for using MVN in cpu memory space
+// // dest: __rc2, __rc3
+// // src: __rc4, __rc5
+// // count: A, X  (save to 05/06)
 
-  asm(
-      ".text\n"
-      ".global far_mvn\n"
-      "far_mvn:\n"
+//   asm(
+//       ".text\n"
+//       ".global near_mvn\n"
+//       "near_mvn:\n"
 
-      "pha\n"  // src low
-      "stx __rc7\n"  // src mid
+//       "sta $05\n" // save count low
+//       "stx $06\n" // save count high
 
-      "lda __rc6\n"
-      "sta __src_bank\n"
-      "lda __rc2\n"
-      "sta __dest_bank\n"
-      "pla\n"  // src low
-      "sta __rc6\n"
+//       "php\n"           // will save everything, including mx bits.
+//       "sei\n"
+//       "clc\n"
+//       ".byte $fb\n"      // XCE instruction
+//       ".byte $c2, $30\n" // REP #$30
 
-      "php\n"           // will save everything, including mx bits.
-      "sei\n"
-      "lda $00\n"
-      "ora #$08\n"
-      "sta $00\n" 
-      "clc\n"
-      ".byte $fb\n"      // XCE instruction
-      ".byte $c2, $30\n" // REP #$30
+//       "ldx __rc4\n"
+//       "ldy __rc2\n"
+//       "lda $05\n"
+//       ".byte $3a\n" // DEC A
 
-      "ldx __rc4\n"
-      "ldy __rc6\n"
-      "lda __rc8\n"
-      ".byte $3a\n" // DEC A
-
-      ".byte $54\n" // MVN
-      "__dest_bank:\n"
-      ".byte $00\n"
-      "__src_bank:\n"
-      ".byte $00\n"
-      "sec\n"
-      ".byte $fb\n" // XCE instruction
-      "lda $00\n"
-      "and #$F7\n"
-      "sta $00\n" // ensure bit 3 is clear on return
-      "plp\n"
-      "rts\n");
-
-__attribute__((noinline, leaf))
-void near_mvn(char* dest, char* src, uint16_t count);
-// near_mvn implementation for using MVN in cpu memory space
-// dest: __rc2, __rc3
-// src: __rc4, __rc5
-// count: A, X  (save to 05/06)
-
-  asm(
-      ".text\n"
-      ".global near_mvn\n"
-      "near_mvn:\n"
-
-      "sta $05\n" // save count low
-      "stx $06\n" // save count high
-
-      "php\n"           // will save everything, including mx bits.
-      "sei\n"
-      "clc\n"
-      ".byte $fb\n"      // XCE instruction
-      ".byte $c2, $30\n" // REP #$30
-
-      "ldx __rc4\n"
-      "ldy __rc2\n"
-      "lda $05\n"
-      ".byte $3a\n" // DEC A
-
-      ".byte $54\n" // MVN
-      "__near_dest_bank:\n"
-      ".byte $00\n"
-      "__near_src_bank:\n"
-      ".byte $00\n"
-      "sec\n"
-      ".byte $fb\n" // XCE instruction
-       "plp\n"
-      "rts\n");    
+//       ".byte $54\n" // MVN
+//       "__near_dest_bank:\n"
+//       ".byte $00\n"
+//       "__near_src_bank:\n"
+//       ".byte $00\n"
+//       "sec\n"
+//       ".byte $fb\n" // XCE instruction
+//        "plp\n"
+//       "rts\n");    
 
 int16_t buf_fread(void *buf, uint16_t nbytes, uint16_t nmemb, uint8_t *fd) {
 	char    *data     = (char *)buf;
@@ -284,24 +234,28 @@ int processFrameStart(FAOChunkHeader *ch) {
 
 __attribute__((noinline))
 int processFrameEnd(FAOChunkHeader *ch) {
-    // wait for VBlank
-    // also some code to handle frame rate timing could go here
-    // while (PEEKW(RAST_ROW_L) != 482) {
-    //     __asm__ volatile(""); // Prevent optimizer from breaking the loop
-    // }
-    // swap MEMTEXT pages
+    // Toggle displayed_page: we were writing to !displayed_page, now show it
+    // If displayed_page was 0, we wrote to page 1, now display page 1
+    // If displayed_page was 1, we wrote to page 0, now display page 0
     if (displayed_page == 0) {
         displayed_page = 1;
+        // Show page 1: text at 0x018000, color at 0x01C000
+        POKE(0xD304, 0x00);
+        POKE(0xD305, 0x80);
+        POKE(0xD306, 0x01);
+        POKE(0xD308, 0x00);
+        POKE(0xD309, 0xC0);
+        POKE(0xD30A, 0x01);
     } else {
         displayed_page = 0;
+        // Show page 0: text at 0x010000, color at 0x014000
+        POKE(0xD304, 0x00);
+        POKE(0xD305, 0x00);
+        POKE(0xD306, 0x01);
+        POKE(0xD308, 0x00);
+        POKE(0xD309, 0x40);
+        POKE(0xD30A, 0x01);
     }
-    POKE(0xD304, (displayed_page == 0) ? 0x00 : 0x00); // low byte
-    POKE(0xD305, (displayed_page == 0) ? 0x00 : 0x80); // mid byte
-    POKE(0xD306, 0x01); // high byte
-    POKE(0xD308, (displayed_page == 0) ? 0x00 : 0x00); // low byte
-    POKE(0xD309, (displayed_page == 0) ? 0x40 : 0xc0); // mid byte
-    POKE(0xD30A, 0x01); // high byte
-    
     return 0;
 }
 
@@ -312,7 +266,7 @@ int processTextColorLUT(FILE *f, FAOChunkHeader *ch) {
         // Standard Text LUT not implemented
               return -1; // Invalid chunk length
         case 0x02:
-            bytes_read = buf_fread(buf2048, sizeof(uint8_t), 2048, f);
+            bytes_read = buf_fread(chunk_buffer, sizeof(uint8_t), 2048, f);
             if (bytes_read != 2048) {
                 textGotoXY(0,10);
                 textPrint("Error reading MEMTEXT LUT data, read ");
@@ -324,10 +278,10 @@ int processTextColorLUT(FILE *f, FAOChunkHeader *ch) {
             // copy to MEMTEXT Color LUT
             POKE(MMU_IO_CTRL,0x08); // IO PAGE 4 (bits 3,1,0)
             for (uint16_t i = 0; i < 2048; i++) {
-                POKE(0xC000 + i, buf2048[i]);
+                POKE(0xC000 + i, chunk_buffer[i]);
             }
             for (uint16_t i = 0; i < 2048; i++) {
-                POKE(0xC800 + i, buf2048[i]);
+                POKE(0xC800 + i, chunk_buffer[i]);
             }            
             POKE(MMU_IO_CTRL,0x00); // IO PAGE 0
             break;
@@ -347,7 +301,7 @@ int processTextFontData(FILE *f, FAOChunkHeader *ch) {
     if (ch->chunkLength != 2048) {
         return -1; // Invalid Text Font Data chunk
     }
-    if (buf_fread(buf2048, sizeof(uint8_t), 2048, f) != 2048) {
+    if (buf_fread(chunk_buffer, sizeof(uint8_t), 2048, f) != 2048) {
         return -1; // Error reading font data
     }
     if (header.mode == 0x02) { // MEMTEXT mode
@@ -356,7 +310,7 @@ int processTextFontData(FILE *f, FAOChunkHeader *ch) {
         POKE(MMU_IO_CTRL,0x09); // IO PAGE 5 (page bits 3,1,0)
 
         for (uint16_t i = 0; i < 2048; i++) {
-            POKE(font_base_addr + i, buf2048[i]);
+            POKE(font_base_addr + i, chunk_buffer[i]);
         }
         POKE(MMU_IO_CTRL,0x00); // IO PAGE 0
     }
@@ -387,10 +341,13 @@ int processTextFixedFrameColor(FILE *f, FAOChunkHeader *ch) {
 }
 
 // Helper function to decode RLE data into specified output buffer
+// Uses volatile pointers since output is memory-mapped via MMU
+__attribute__((noinline))
 static void decodeRLEFrame(uint16_t chunkLength, uint8_t chunkID, uint8_t *output_buffer) {
-    uint8_t *in_ptr = buf2048;
-    uint8_t *in_end = buf2048 + chunkLength;
-    uint8_t *out_ptr = chunk_bases[chunkID];  // Use pre-calculated base
+    uint8_t *in_ptr = chunk_buffer;
+    uint8_t *in_end = chunk_buffer + chunkLength;
+    // Calculate output pointer: base + (chunkID * 2400)
+    volatile uint8_t *out_ptr = (volatile uint8_t *)(MEMTEXT_BASE + (uint16_t)chunkID * CHUNK_SIZE);
     
     while (in_ptr < in_end) {
         uint8_t countByte = *in_ptr++;
@@ -399,15 +356,6 @@ static void decodeRLEFrame(uint16_t chunkLength, uint8_t chunkID, uint8_t *outpu
             // Literal run: copy (count & 0x7F) words directly
             uint8_t literalCount = countByte & 0x7F;
             
-            // Unrolled loop for literal runs (4x unroll)
-            while (literalCount >= 4) {
-                *out_ptr++ = *in_ptr++;  *out_ptr++ = *in_ptr++;
-                *out_ptr++ = *in_ptr++;  *out_ptr++ = *in_ptr++;
-                *out_ptr++ = *in_ptr++;  *out_ptr++ = *in_ptr++;
-                *out_ptr++ = *in_ptr++;  *out_ptr++ = *in_ptr++;
-                literalCount -= 4;
-            }
-            // Handle remaining words
             while (literalCount--) {
                 *out_ptr++ = *in_ptr++;
                 *out_ptr++ = *in_ptr++;
@@ -418,15 +366,6 @@ static void decodeRLEFrame(uint16_t chunkLength, uint8_t chunkID, uint8_t *outpu
             uint8_t value_lo = *in_ptr++;
             uint8_t value_hi = *in_ptr++;
             
-            // Unrolled loop for repeated runs (4x unroll)
-            while (repeatCount >= 4) {
-                *out_ptr++ = value_lo; *out_ptr++ = value_hi;
-                *out_ptr++ = value_lo; *out_ptr++ = value_hi;
-                *out_ptr++ = value_lo; *out_ptr++ = value_hi;
-                *out_ptr++ = value_lo; *out_ptr++ = value_hi;
-                repeatCount -= 4;
-            }
-            // Handle remaining words
             while (repeatCount--) {
                 *out_ptr++ = value_lo;
                 *out_ptr++ = value_hi;
@@ -435,42 +374,53 @@ static void decodeRLEFrame(uint16_t chunkLength, uint8_t chunkID, uint8_t *outpu
     }
 }
 
+#pragma clang optimize off
 __attribute__((noinline))
 int processTextRLEFrameCharacter(FILE *f, FAOChunkHeader *ch) {
-    if (buf_fread(buf2048, sizeof(uint8_t), ch->chunkLength, f) != ch->chunkLength) {
+    if (buf_fread(chunk_buffer, sizeof(uint8_t), ch->chunkLength, f) != ch->chunkLength) {
         return -1; // Error reading RLE data
     }
-    // Swap MMU and write to 0x8000
+    // Write to the OPPOSITE of displayed_page
+    // displayed_page=0 means page 0 is shown, write to page 1 (banks 12,13)
+    // displayed_page=1 means page 1 is shown, write to page 0 (banks 8,9)
     if (displayed_page == 0) {
-        // write to inactive page 1
-        POKE(MMU_MEM_BANK_4,12); 
-        POKE(MMU_MEM_BANK_5,13);
+        POKE(MMU_MEM_BANK_4, 12); 
+        POKE(MMU_MEM_BANK_5, 13);
     } else {
-        POKE(MMU_MEM_BANK_4,8); 
-        POKE(MMU_MEM_BANK_5,9);
+        POKE(MMU_MEM_BANK_4, 8); 
+        POKE(MMU_MEM_BANK_5, 9);
     }
 
     decodeRLEFrame(ch->chunkLength, ch->chunkID, (uint8_t *) 0x8000);
+    // Restore default MMU banks to avoid corrupting stack
+    POKE(MMU_MEM_BANK_4, 4);
+    POKE(MMU_MEM_BANK_5, 5);
     return 0;
 }
 
+__attribute__((noinline))
 int processTextRLEFrameColor(FILE *f, FAOChunkHeader *ch) {
-    if (buf_fread(buf2048, sizeof(uint8_t), ch->chunkLength, f) != ch->chunkLength) {
+    if (buf_fread(chunk_buffer, sizeof(uint8_t), ch->chunkLength, f) != ch->chunkLength) {
         return -1; // Error reading RLE data
     }
-    // Swap MMU and write to 0x8000
+    // Write to the OPPOSITE of displayed_page
+    // displayed_page=0 means page 0 is shown, write to page 1 (banks 14,15)
+    // displayed_page=1 means page 1 is shown, write to page 0 (banks 10,11)
     if (displayed_page == 0) {
-        // write to inactive page 1
-        POKE(MMU_MEM_BANK_4,14); 
-        POKE(MMU_MEM_BANK_5,15);
+        POKE(MMU_MEM_BANK_4, 14); 
+        POKE(MMU_MEM_BANK_5, 15);
     } else {
-        POKE(MMU_MEM_BANK_4,10); 
-        POKE(MMU_MEM_BANK_5,11);
+        POKE(MMU_MEM_BANK_4, 10); 
+        POKE(MMU_MEM_BANK_5, 11);
     }
 
-    decodeRLEFrame(ch->chunkLength, ch->chunkID, (uint8_t *) 0x8000);    
+    decodeRLEFrame(ch->chunkLength, ch->chunkID, (uint8_t *) 0x8000);
+    // Restore default MMU banks to avoid corrupting stack
+    POKE(MMU_MEM_BANK_4, 4);
+    POKE(MMU_MEM_BANK_5, 5);
     return 0;
 }
+#pragma clang optimize on
 
 int processTextRLEFontData(FILE *f, FAOChunkHeader *ch) {
     if (ch->chunkType != 0x07 || ch->chunkID != 0x00) {
