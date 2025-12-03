@@ -11,6 +11,8 @@ FAOHeader header;
 FAOChunkHeader chunkHeader;
 char filename[256]={0};
 char g_base_dir[256]={0};
+
+
 int main(int argc, char *argv[]) {
 
     // uint8_t old_mmu_ctrl = PEEK(MMU_MEM_CTRL);
@@ -38,16 +40,16 @@ int main(int argc, char *argv[]) {
     POKE(0xD300, 0x01);
     POKE(VKY_MSTR_CTRL_0, 0x01); // BLOCK MODE TEXT
 
-
-
-
     FILE *fao = fopen(filename, "rb");
     if (!fao) {
+
+
         return -1; // Error opening file
     }
 
     if (readFAOHeader(fao, &header) != 1) {
         fclose(fao);
+
         return -1; // Error reading header
     }
 

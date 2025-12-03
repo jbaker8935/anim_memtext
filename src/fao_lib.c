@@ -381,8 +381,6 @@ int processTextRLEFrameCharacter(FILE *f, FAOChunkHeader *ch) {
         return -1; // Error reading RLE data
     }
     // Write to the OPPOSITE of displayed_page
-    // displayed_page=0 means page 0 is shown, write to page 1 (banks 12,13)
-    // displayed_page=1 means page 1 is shown, write to page 0 (banks 8,9)
     if (displayed_page == 0) {
         POKE(MMU_MEM_BANK_4, 12); 
         POKE(MMU_MEM_BANK_5, 13);
@@ -404,8 +402,6 @@ int processTextRLEFrameColor(FILE *f, FAOChunkHeader *ch) {
         return -1; // Error reading RLE data
     }
     // Write to the OPPOSITE of displayed_page
-    // displayed_page=0 means page 0 is shown, write to page 1 (banks 14,15)
-    // displayed_page=1 means page 1 is shown, write to page 0 (banks 10,11)
     if (displayed_page == 0) {
         POKE(MMU_MEM_BANK_4, 14); 
         POKE(MMU_MEM_BANK_5, 15);
