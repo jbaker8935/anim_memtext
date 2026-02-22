@@ -92,7 +92,8 @@ OUTPUT_FORMAT {
   BYTE(0x00)
   SHORT(__bss_start-ORIGIN(ram))  /* size to load */
   BYTE(0x00)
-  TRIM(ram)
+  /* TRIM(ram) */
+  FULL(ram, 0, __bss_start-ORIGIN(ram))  /* Output exact size without trimming */
 
   /* Overlay Segments and Binary Data */
   INCLUDE output.ld

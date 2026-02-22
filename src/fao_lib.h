@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "../src/fat32_stream.h"
 
 /*
 ## File Format
@@ -64,13 +65,13 @@
 ### Text Fixed Frame Character for MEMTEXT
 - Chunk Type $03
 - Chunk ID: $00 # Set to $00 for the first 3 chunks of frame, Set to $01 on last chunk of frame
-- Chunk Length: 2400 bytes
-- Chunk Data: 2400 bytes to fill the Text Matrix.  four chunks per frame for a total of 9600 bytes
+- Chunk Length: Chunks with chunk ID 0-8 are 1024 bytes each, chunk ID 9 is 384 bytes for a total of 9600 bytes per frame.
+- Chunk Data: ten chunks per frame for a total of 9600 bytes
 ### Text Fixed Frame Color for MEMTEXT
 - Chunk Type: $04
 - Chunk ID: $00 # Set to $00 for the first 3 chunks of frame, Set to $01 on last chunk of frame
-- Chunk Length: 2400 bytes
-- Chunk Data: 2400 bytes to fill the Color Matrix. Four chunks per frame for a total of 9600 bytes
+- Chunk Length: Chunks with chunk ID 0-8 are 1024 bytes each, chunk ID 9 is 384 bytes for a total of 9600 bytes per frame.
+- Chunk Data: ten chunks per frame for a total of 9600 bytes
 ### Text RLE Frame Character
 - Chunk Type: $05
 - Chunk ID: $00   
@@ -85,9 +86,10 @@ encoding is 4800 bytes per frame.
 - Chunk ID: $00   # Set to $00 for the first 3 chunks of frame, Set to $01 on last chunk of frame
 - Chunk Length: variable based on Chunk Data
 - Chunk Data: run length encoded character stream
-- RLE Encoding: 1 byte count value. If bit 7 is clear bits 0-6 provides the repeat count for the next 2 bytes.
-If bit 7 is set, then bits 0-6 provide the count of following words (2 bytes) to output.   For example: ($05,$20,$21) means output ($20, $21) 5 times,
-($85, $20, $30, $31, $42, $51) means output the next 5 words without repeats.  The total count of characters represented by RLE encoding is 2400 decoded bytes per chunk (2 * 80 * 15).  All four chunks for MEMTEXT will output a total of 9600 bytes.
+- RLE Encoding: 2 byte count value. If bit 15 is clear bits 0-14 provides the repeat count for the next 2 bytes.
+If bit 15 is set, then bits 0-14 provide the count of following words (2 bytes) to output.   For example: ($05, $00,$20,$21) means output ($20, $21) 5 times,
+($05, $80, $20, $30, $31, $42, $51) means output the next 5 words without repeats.
+Chunks with chunk ID 0-8 are 1024 bytes each, chunk ID 9 is 384 bytes for a total of 9600 bytes per frame.
 ### Text RLE Frame Color
 - Chunk Type: $06
 - Chunk ID: $00
@@ -98,8 +100,8 @@ encoding is 4800 bytes per frame.
 - Chunk Type: $06
 - Chunk ID: $00 # Set to $00 for the first 3 chunks of frame, Set to $01 on last chunk of frame
 - Chunk Length: variable based on Chunk Data
-- Chunk Data: RLE encoded data, as above, for the color matrix.  The total count of characters represented by RLE encoding is 2400 decoded bytes per chunk (2 * 80 * 15).  All four chunks for MEMTEXT will output a total of 9600 bytes.
-### Text RLE Font Data
+- Chunk Data: RLE encoded data, as above, for the color matrix.  
+Chunks with chunk ID 0-8 are 1024 bytes each, chunk ID 9 is 384 bytes for a total of 9600 bytes per frame.### Text RLE Font Data
 - Chunk Type: $07
 - Chunk ID: $00
 - Chunk Length: variable based on Chunk Data
@@ -144,20 +146,21 @@ typedef struct {
     // Chunk Data: of chunk length bytes
 } FAOChunkHeader;
 
-int readFAOHeader(FILE *f, FAOHeader *h);
-int readFAOChunkHeader(FILE *f, FAOChunkHeader *ch);
+int readFAOHeader(fat32_file_t *f, FAOHeader *h);
+int readFAOChunkHeader(fat32_file_t *f, FAOChunkHeader *ch);
 int processFrameStart(FAOChunkHeader *ch);
 int processFrameEnd(FAOChunkHeader *ch);
-int processTextColorLUT(FILE *f, FAOChunkHeader *ch);
-int processTextFontData(FILE *f, FAOChunkHeader *ch);
-int processTextFixedFrameCharacter(FILE *f, FAOChunkHeader *ch);
-int processTextFixedFrameColor(FILE *f, FAOChunkHeader *ch);
-int processTextRLEFrameCharacter(FILE *f, FAOChunkHeader *ch);
-int processTextRLEFrameColor(FILE *f, FAOChunkHeader *ch);
-int processTextRLEFontData(FILE *f, FAOChunkHeader *ch);
-int processGraphicsColorLUT(FILE *f, FAOChunkHeader *ch);
-int processGraphicsTileSetData(FILE *f, FAOChunkHeader *ch);
-int processGraphicsTileMap(FILE *f, FAOChunkHeader *ch, uint8_t columns, uint8_t rows);
+int processTextColorLUT(fat32_file_t *f, FAOChunkHeader *ch);
+int processTextFontData(fat32_file_t *f, FAOChunkHeader *ch);
+int processTextFixedFrameCharacter(fat32_file_t *f, FAOChunkHeader *ch);
+int processTextFixedFrameColor(fat32_file_t *f, FAOChunkHeader *ch);
+int processTextRLEFrameCharacter(fat32_file_t *f, FAOChunkHeader *ch);
+int processTextRLEFrameColor(fat32_file_t *f, FAOChunkHeader *ch);
+int processTextRLEFontData(fat32_file_t *f, FAOChunkHeader *ch);
+int processGraphicsColorLUT(fat32_file_t *f, FAOChunkHeader *ch);
+int processGraphicsTileSetData(fat32_file_t *f, FAOChunkHeader *ch);
+int processGraphicsTileMap(fat32_file_t *f, FAOChunkHeader *ch, uint8_t columns, uint8_t rows);
 int processFAOFile(const char *filename);
+void dma16fill(uint32_t dest, uint32_t word_count, uint32_t value);
 
 #endif // FAO_LIB_H
