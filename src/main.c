@@ -136,41 +136,33 @@ POKE(VS_SCI_CTRL,0);
 __attribute__((noinline, optnone))
 void flush_mp3buffer()
 {
-  uint8_t endFillByte = vs1053_read_mem(PAR_END_FILL_BYTE);
+    uint8_t endFillByte = vs1053_read_mem(PAR_END_FILL_BYTE);
+    uint16_t rawFIFOCount = PEEKW(VS_FIFO_COUNT);
+    uint16_t bytesToTopOff = 2048 - (rawFIFOCount & 0x0FFF);  // found how many bytes are left in the 2KB buffer
 
-  for (uint16_t i = 0; i < SDI_END_FILL_BYTES; i += SDI_MAX_TRANSFER_SIZE) {
-    uint16_t toWrite = (SDI_END_FILL_BYTES - i >= SDI_MAX_TRANSFER_SIZE)
-                           ? SDI_MAX_TRANSFER_SIZE
-                           : (SDI_END_FILL_BYTES - i);
-    for (uint16_t j = 0; j < toWrite; j++) POKE(VS_FIFO_DATA, endFillByte);
-  }  
-    
-  unsigned short oldMode = vs1053_read_sci(VS_SCI_ADDR_MODE);
-  vs1053_write_sci(VS_SCI_ADDR_MODE, oldMode | SM_CANCEL);
-  // flush after cancel
-  for (uint16_t i = 0; i < SDI_END_FILL_BYTES; i += SDI_MAX_TRANSFER_SIZE) {
-    uint16_t toWrite = (SDI_END_FILL_BYTES - i >= SDI_MAX_TRANSFER_SIZE)
-                           ? SDI_MAX_TRANSFER_SIZE
-                           : (SDI_END_FILL_BYTES - i);
-    for (uint16_t j = 0; j < toWrite; j++) POKE(VS_FIFO_DATA, endFillByte);
-    if(!(vs1053_read_sci(VS_SCI_ADDR_MODE) & SM_CANCEL)) {
-            break;
+    uint16_t sound_size = SDI_END_FILL_BYTES;
+
+    while (sound_size > 0) {
+        for (uint8_t i = 0; i < bytesToTopOff && sound_size > 0; i++) {
+            POKE(VS_FIFO_DATA, endFillByte);
+            sound_size--;
+        }
+        // wait for some space
+        do {
+            rawFIFOCount = PEEKW(VS_FIFO_COUNT);
+        } while ((rawFIFOCount & 0x0FFF) > 1792);
+        bytesToTopOff = 2048 - (rawFIFOCount & 0x0FFF);  // found how many fill bytes left
     }
-  } 
-//   // reset
-//   vs1053_write_sci(VS_SCI_ADDR_MODE, oldMode | SM_RESET);
-//   // wait for reset to complete
-//   for(uint8_t i = 0; i < 100; i++) {
-//     __asm__("nop");
-//   }
 }
 
 __attribute__((noinline))
-void mp3_stream_reader() {
+void mp3_stream_reader(bool fill_fifo) {
     // uint8_t bytes_read = 0;  // local 8 bit def
     while (anim_started && playMP3 && !mp3Done) {
-        if(mp3_frame_bytes >= MP3_FRAME_BYTES) {
-            return; // proceed to next frame
+        if(mp3_frame_bytes >= MP3_FRAME_BYTES && !fill_fifo) {
+            // limit mp3 bytes sent per frame to avoid starving animation   
+            // but allow filling FIFO before animation starts.         
+            return; 
         }
 
         rawFIFOCount = PEEKW(VS_FIFO_COUNT);
@@ -266,12 +258,12 @@ uint8_t play_animation(char *anim_filename, char *mp3_filename) {
             return -1;
         } else {
             playMP3 = true;
+            mp3Done = false;
         }
     }
 
-
-    openAllCODEC();
-    boostVSClock();
+    // openAllCODEC();
+    // boostVSClock();
 
     // zero out MEMTEXT high memory 0x10000-0x1FFFF
     graphicsWaitVerticalBlank();
@@ -311,6 +303,7 @@ uint8_t play_animation(char *anim_filename, char *mp3_filename) {
             case 0xFF:
                 // using timer0 instead of polling timer1, hard-coded to 10 fps
                 while(!isTimerDone())
+                    mp3_stream_reader(!anim_started); // stream MP3 data while waiting for frame duration timer
                     ;
                 setTimer0();
                 result = processFrameEnd(&chunkHeader);
@@ -370,15 +363,13 @@ uint8_t play_animation(char *anim_filename, char *mp3_filename) {
             return -1; // Error processing chunk
         }
         // MP3 stream here
-        mp3_stream_reader();
+        mp3_stream_reader(!anim_started);
     }
     if(playMP3) {
         fat32_close(&mp3file);
         mp3Done = true;
         playMP3 = false;
-        flush_mp3buffer();
-        openAllCODEC();
-        boostVSClock();         
+        flush_mp3buffer();     
     } 
     fat32_close(&fao);
     return 0; // Success
@@ -401,7 +392,8 @@ int main(int argc, char *argv[]) {
         return -1;
     }
     // if no argument, try to open "playlist.txt" in base dir
-    if (argc == 1) {
+    // workaround for fm bug
+    if (argc == 1 || (argc == 2 && argv[0][0] == '0')) {
         strcpy(filename, g_base_dir);
         strcat(filename, "playlist.txt");
         if (!fat32_open(&playlist, filename)) {
@@ -418,6 +410,9 @@ int main(int argc, char *argv[]) {
         }
 
     }
+
+    openAllCODEC();
+    boostVSClock();    
 
     // if use playlist is true, read line from playlist.txt
     // split line with space as a separator into anim file and optional mp3 file
@@ -441,7 +436,6 @@ int main(int argc, char *argv[]) {
                 if(strlen(base_filename) == 0) {
                     continue; // skip empty lines
                 } 
-                // printf("Playing animation: %s MP3: %s\n", base_filename, base_mp3filename);
                 play_animation(base_filename, base_mp3filename);
             }
         }
