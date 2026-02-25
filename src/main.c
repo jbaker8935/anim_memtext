@@ -423,9 +423,9 @@ __attribute((noinline)) uint8_t play_animation(char *anim_filename, char *mp3_fi
             return -1;  // Error processing chunk
         }
         // MP3 stream here
-        if (playMP3 && !mp3Done) {
-            mp3_stream_reader();
-        }
+//         if (playMP3 && !mp3Done) {
+//            mp3_stream_reader();
+//         }
 
         kernelNextEvent();
         if (kernelEventData.type == kernelEvent(key.PRESSED)) {
