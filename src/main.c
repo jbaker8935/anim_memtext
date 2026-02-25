@@ -361,12 +361,14 @@ __attribute((noinline)) uint8_t play_animation(char *anim_filename, char *mp3_fi
                 break;
             case 0xFF:
                 // using timer0 instead of polling timer1, hard-coded to 10 fps
-                while (!isTimerDone())
-                    if (playMP3 && !mp3Done) {
-                        mp3_stream_reader();
-                    };
+                while (!isTimerDone()) {
+                    // busy wait for frame duration, could do other work here if needed
+                }
                 setTimer0();
                 result = processFrameEnd(&chunkHeader);
+                if (playMP3 && !mp3Done) {
+                    mp3_stream_reader();
+                }
                 // set anim_started when first frame is processed
                 anim_started = true;
                 POKE(VKY_MSTR_CTRL_1, 0x40);  // ENABLE MEMTEXT OVERRIDE BLOCK MODE
