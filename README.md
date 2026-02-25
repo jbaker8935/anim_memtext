@@ -11,7 +11,7 @@ its actually faster than kernel for 512+ reads because it skips a buffer write.
 It's an experimental hack.
 
 rudimentary mp3 playback is working with limits
-- use lowbit rate mp3.  examples uses 64bps mp3
+- use lowbit rate mp3.  examples use 64bps mp3. player buffering based on that rate.
 - on the cli the mp3 file is an optional second argument
 - in the playlist add the mp3 after the animation bin filename with a space in between.
 

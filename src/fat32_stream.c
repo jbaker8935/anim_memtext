@@ -66,32 +66,13 @@ static uint32_t get_next_cluster(uint32_t cluster);
 static inline uint32_t cluster_to_sector(uint32_t cluster);
 
 static inline void fast_memcpy(void* dest, const void* src, uint16_t count) {
-    // Safety check: Y register is 8-bit, so max count is 256
     if (count == 0) return;
     if (count > 256) {
-        // Fall back to standard memcpy for large blocks
-        memcpy(dest, src, count);
+        // Use 65816 MVN for large block moves (faster than byte loop)
+        near_mvn((char*)dest, (char*)src, count);
         return;
     }
     fast_memcpy_asm(dest, src, count);
-    
-    // uint8_t *d = (uint8_t*)dest;
-    // const uint8_t *s = (const uint8_t*)src;
-    // uint8_t c = (uint8_t)count;  // Lower byte of count
-    
-    // // Use inline assembly with Y as index, comparing after increment
-    // __asm__ volatile (
-    //     "ldy #0\n"
-    //     "1:\n"
-    //     "lda (%1),y\n"    // Load from source
-    //     "sta (%0),y\n"    // Store to destination
-    //     "iny\n"
-    //     "cpy %2\n"        // Compare Y to lower byte of count
-    //     "bne 1b\n"
-    //     : // no outputs
-    //     : "r"(d), "r"(s), "r"(c)
-    //     : "a", "y", "memory"
-    // );
 }
 
 
@@ -162,8 +143,7 @@ static inline void spi_set_fast_clock(void) {
     s_fast_clock_enabled = true;
 }
 
-static bool sd_wait_data_token(uint8_t expected_token);
-
+// sd_wait_data_token_asm replaces the C version for all data token waiting
 bool sd_wait_data_token_asm(uint8_t expected_token);
     // expected_token: A
 
@@ -289,12 +269,11 @@ void sd_read_data_block_asm(uint8_t * buffer);
 
 // Optimized sector read - reads 512 bytes with minimal overhead
 // Uses inline assembly for the tight inner loop on 6502
-__attribute__((optnone))
 static bool sd_read_data_block(uint8_t* buffer) {
-    if (!sd_wait_data_token(0xFE)) {
+    if (!sd_wait_data_token_asm(0xFE)) {
         return false;
     }
-   sd_read_data_block_asm(buffer);
+    sd_read_data_block_asm(buffer);
 
     return true;
 }
@@ -334,19 +313,8 @@ static bool sd_send_cmd(uint8_t cmd, uint32_t arg, uint8_t* response_out) {
     return false;
 }
 
-static bool sd_wait_data_token(uint8_t expected_token) {
-
-    for (uint16_t x = 0; x < 256; ++x) {
-        for (uint16_t y = 0; y < 256; ++y) {
-            uint8_t token = spi_exchange(0xFF);
-            if (token == expected_token) {
-                return true;
-            }
-        }
-    }
-    
-    return false;
-}
+// C sd_wait_data_token removed - sd_wait_data_token_asm is used instead
+// (eliminates spi_exchange function call overhead per byte in token wait loop)
 
 static bool s_card_block_addressing = false;
 
@@ -453,81 +421,60 @@ static bool sd_read_sector(uint32_t sector, uint8_t* buffer) {
     return false;
 }
 
-static bool sd_read_data_block_split(uint8_t* buf1, uint16_t count1, uint8_t* buf2) {
-    if (!sd_wait_data_token(0xFE)) {
-        return false;
-    }
+// sd_read_data_block_split and sd_read_sector_split removed -
+// all partial sector handling now uses full sector read to cache + fast_memcpy
 
-    // Read first count1 bytes to buf1
-    for (uint16_t i = 0; i < count1; ++i) {
-        *buf1++ = spi_exchange(0xFF);
-    }
-
-    // Read remaining bytes to buf2 or discard
-    uint16_t remaining = 512 - count1;
-    for (uint16_t i = 0; i < remaining; ++i) {
-        if (buf2) {
-            *buf2++ = spi_exchange(0xFF);
-        } else {
-            spi_exchange(0xFF);  // Discard
-        }
-    }
-    
-    // Discard CRC bytes (2 bytes)
-    spi_exchange(0xFF);
-    spi_exchange(0xFF);
-
-    return true;
-}
-
-static bool sd_read_sector_split(uint32_t sector, uint8_t* buf1, uint16_t count1, uint8_t* buf2) {
-    if (!s_card_block_addressing) {
-        return false;
-    }
-
-    bool fast_clock_was_enabled = s_fast_clock_enabled;
-    bool clock_downgraded = false;
-
-    for (uint8_t attempt = 0; attempt < 3; ++attempt) {
-        if (attempt > 0 && fast_clock_was_enabled && !clock_downgraded) {
-            spi_set_slow_clock();
-            spi_exchange(0xFF);
-            clock_downgraded = true;
-        }
-
-        uint8_t response = 0xFF;
-        if (!sd_send_cmd(17, sector, &response)) {
-            spi_wait_ready();
-            continue;
-        }
-
-        if (response != 0x00) {
-            spi_deselect();
-            spi_exchange(0xFF);
-            spi_wait_ready();
-            continue;
-        }
-
-        if (!sd_read_data_block_split(buf1, count1, buf2)) {
-            spi_deselect();
-            spi_exchange(0xFF);
-            spi_wait_ready();
-            continue;
-        }
-
-        spi_deselect();
-        if (clock_downgraded && fast_clock_was_enabled) {
-            spi_set_fast_clock();
-        }
-        return true;
-    }
-
-    if (clock_downgraded && fast_clock_was_enabled) {
-        spi_set_fast_clock();
-    }
-
-    return false;
-}
+// Inline asm for CMD12 stop transmission - avoids 7 spi_exchange function calls
+void sd_stop_transmission_asm(void);
+    asm(
+        ".text\n"
+        ".global sd_stop_transmission_asm\n"
+        "sd_stop_transmission_asm:\n"
+        // Ncr byte
+        "lda #$FF\n"
+        "sta $DD01\n"
+        "1: bit $DD00\n"
+        "bmi 1b\n"
+        // CMD12: 0x40 | 12 = 0x4C
+        "lda #$4C\n"
+        "sta $DD01\n"
+        "2: bit $DD00\n"
+        "bmi 2b\n"
+        // 4 zero arg bytes
+        // 4 zero arg bytes - use lda #0/sta instead of stz (6502 compatible)
+        "lda #$00\n"
+        "sta $DD01\n"
+        "3: bit $DD00\n"
+        "bmi 3b\n"
+        "sta $DD01\n"
+        "4: bit $DD00\n"
+        "bmi 4b\n"
+        "sta $DD01\n"
+        "5: bit $DD00\n"
+        "bmi 5b\n"
+        "sta $DD01\n"
+        "6: bit $DD00\n"
+        "bmi 6b\n"
+        // CRC byte
+        "lda #$01\n"
+        "sta $DD01\n"
+        "7: bit $DD00\n"
+        "bmi 7b\n"
+        "lda $DD01\n"  // discard
+        // Wait for response (up to 10 attempts)
+        "ldx #10\n"
+        "__cmd12_wait:\n"
+        "lda #$FF\n"
+        "sta $DD01\n"
+        "8: bit $DD00\n"
+        "bmi 8b\n"
+        "lda $DD01\n"
+        "bpl __cmd12_done\n"  // bit 7 clear = got response
+        "dex\n"
+        "bne __cmd12_wait\n"
+        "__cmd12_done:\n"
+        "rts\n"
+    );
 
 static bool sd_read_multiple_sectors(uint32_t start_sector, uint8_t* buffer, uint16_t num_sectors) {
     if (!s_card_block_addressing) {
@@ -544,28 +491,18 @@ static bool sd_read_multiple_sectors(uint32_t start_sector, uint8_t* buffer, uin
         return false;
     }
 
+    // Read sectors with pointer advancement instead of multiply
+    uint8_t* ptr = buffer;
     for (uint16_t i = 0; i < num_sectors; ++i) {
-        if (!sd_read_data_block(buffer + (i * SECTOR_SIZE))) {
+        if (!sd_read_data_block(ptr)) {
             spi_deselect();
             return false;
         }
+        ptr += SECTOR_SIZE;
     }
 
-    // Stop transmission (CMD12)
-    spi_exchange(0xFF);  // Ncr
-    spi_exchange(0x40 | 12);
-    spi_exchange(0x00);
-    spi_exchange(0x00);
-    spi_exchange(0x00);
-    spi_exchange(0x00);
-    spi_exchange(0x01);
-
-    for (int i = 0; i < 10; ++i) {
-        uint8_t stop = spi_exchange(0xFF);
-        if ((stop & 0x80) == 0) {
-            break;
-        }
-    }
+    // Fast CMD12 stop transmission
+    sd_stop_transmission_asm();
 
     spi_wait_ready();
     spi_deselect();
@@ -1011,11 +948,31 @@ int fat32_read(fat32_file_t* file, uint8_t* buffer, uint16_t bytes) {
 
         // Fast path: aligned, whole sectors available
         if ((sector_offset == 0) && (remaining_this_call >= SECTOR_SIZE)) {
-            uint16_t sectors_to_read = remaining_this_call >> 9; // /512
+            uint16_t sectors_wanted = remaining_this_call >> 9; // /512
             uint8_t sectors_left_in_cluster = (uint8_t)(spc - sic);
+            uint16_t sectors_to_read = sectors_wanted;
             if (sectors_to_read > sectors_left_in_cluster) {
                 sectors_to_read = sectors_left_in_cluster;
             }
+
+            // Contiguous cluster extension: if we need more sectors than
+            // remain in this cluster, check if next cluster(s) are physically
+            // contiguous. This lets us issue a single CMD18 multi-block read
+            // across cluster boundaries - critical for 2048-byte reads on
+            // small clusters.
+            uint32_t extended_cluster = cur_cluster;
+            uint16_t total_sectors = sectors_to_read;
+            while (total_sectors < sectors_wanted) {
+                uint32_t next = get_next_cluster(extended_cluster);
+                if (next == 0) break;
+                // Check if next cluster is physically contiguous
+                if (next != extended_cluster + 1) break;
+                extended_cluster = next;
+                uint16_t can_add = sectors_wanted - total_sectors;
+                if (can_add > spc) can_add = spc;
+                total_sectors += can_add;
+            }
+            sectors_to_read = total_sectors;
 
             if (sectors_to_read >= 2) {
                 if (!sd_read_multiple_sectors(cur_sector, buffer + done, sectors_to_read)) {
@@ -1034,8 +991,32 @@ int fat32_read(fat32_file_t* file, uint8_t* buffer, uint16_t bytes) {
             done       += advanced_bytes;
             bytes_read += advanced_bytes;
             cur_sector += sectors_to_read;
-            sic        += sectors_to_read;
             buffer_valid = false;
+
+            // Advance cluster tracking to account for sectors read.
+            // Since we already verified clusters are contiguous during the
+            // extension phase, we can advance cur_cluster arithmetically
+            // instead of re-reading the FAT with get_next_cluster.
+            {
+                uint16_t sectors_remaining = sectors_to_read;
+                uint8_t left_in_cur = (uint8_t)(spc - sic);
+                if (sectors_remaining < left_in_cur) {
+                    sic += (uint8_t)sectors_remaining;
+                } else {
+                    sectors_remaining -= left_in_cur;
+                    // We verified contiguous clusters, so advance arithmetically
+                    uint16_t full_clusters = sectors_remaining / spc;
+                    uint8_t remainder = (uint8_t)(sectors_remaining % spc);
+                    // Advance past current cluster + full clusters
+                    cur_cluster += 1 + full_clusters;
+                    sic = remainder;
+                    if (remainder == 0 && full_clusters > 0) {
+                        // Landed exactly at end of a cluster boundary
+                        // sic = 0 means we need to check if there's a next cluster
+                    }
+                    cur_sector = cluster_to_sector(cur_cluster) + sic;
+                }
+            }
 
             if (sic >= spc) {
                 cur_cluster = get_next_cluster(cur_cluster);
