@@ -1,11 +1,11 @@
 bear.bin
 dock1.bin
 color_face.bin
+dance_1.bin
+dance_2.bin
 color_surf.bin
 color_surf2.bin
 surf_images.bin
-dance_1.bin
-dance_2.bin
 ba_memtext.bin ba64.mp3
 ricka.bin ricka64.mp3
 spider.bin
