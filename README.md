@@ -18,3 +18,6 @@ rudimentary mp3 playback is working with limits
 TODOs:
 - implement additional chunk types - (i will probably never get to this.)
 
+NEW:
+- added support for future frame mode color double buffering
+

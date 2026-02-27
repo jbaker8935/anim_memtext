@@ -68,6 +68,7 @@ bool use_playlist = false;
 bool playMP3 = false;
 bool mp3Done = false;
 bool anim_started = false;
+extern uint8_t displayed_page; // 0 or 1, indicates which page is currently being displayed (vs which page we're writing to)
 
 uint16_t vs1053_read_sci(uint8_t addr) {
     // while (PEEK(0xD700) & CTRL_Busy);  // make sure not busy
@@ -156,12 +157,22 @@ void openAllCODEC() {
     POKE(0xD622, 0x01);
     while (PEEK(0xD622) & 0x01)
         ;
+
+    // Set volume to a reasonable level
+
+    POKE(0xD620, 0x68);
+    POKE(0xD621, 0x05);
+    POKE(0xD622, 0x01);
+    while (PEEK(0xD622) & 0x01)
+        ;
+
 }
+
 
 void boostVSClock() {
     // target the clock register
     POKEW(VS_SCI_ADDR, VS_SCI_ADDR_CLOCKF);
-    // aim for 2.5X clock multiplier, no frills
+    // 4.5X clock multiplier, no frills
     POKEW(VS_SCI_DATA, 0xC000);
     // trigger the command
     POKE(VS_SCI_CTRL, CTRL_Start);
@@ -276,6 +287,26 @@ __attribute__((noinline)) void mp3_stream_reader() {
         streamBufferFillWords = VS1053bStreamBufferFillWords();
     }
 }
+
+void test_color_lut() {
+    // page 0: text at 0x010000
+    // page 1: text at 0x018000
+    uint32_t address = displayed_page == 0 ? 0x010000l : 0x018000l;
+    for(uint8_t lut_idx = 0; lut_idx < 4; lut_idx++) {
+        for (uint16_t i = 0; i < 4800; i++) {
+            uint32_t char_address = address + i * 2;
+            uint16_t text = FAR_PEEKW(char_address);
+            // set bits 10 and 11 to lut_idx
+            text &= 0xF3FF; // clear bits 10 and 11
+            text |= (lut_idx & 0x03) << 10; // set bits 10 and 11 to lut_idx
+            FAR_POKEW(char_address, text);
+        }
+        getchar();
+    }
+}
+
+
+
 __attribute((noinline)) uint8_t play_animation(char *anim_filename, char *mp3_filename) {
     bool quit = false;
 
@@ -372,6 +403,7 @@ __attribute((noinline)) uint8_t play_animation(char *anim_filename, char *mp3_fi
                 // set anim_started when first frame is processed
                 anim_started = true;
                 POKE(VKY_MSTR_CTRL_1, 0x40);  // ENABLE MEMTEXT OVERRIDE BLOCK MODE
+                // test_color_lut();
                 break;
             case 0x01:
                 result = processTextColorLUT(&fao, &chunkHeader);
