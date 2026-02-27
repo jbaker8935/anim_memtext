@@ -250,24 +250,24 @@ int processTextColorLUT(fat32_file_t *f, FAOChunkHeader *ch) {
             }
             // copy to MEMTEXT Color LUT
             POKE(MMU_IO_CTRL, 0x08);  // IO PAGE 4 (bits 3,1,0)
-            uint16_t lut_length = ch->chunkLength / 2;
-            if (ch->chunkID == 0) {
-                for (uint16_t i = 0; i < lut_length; i++) {
-                    POKE(0xC000 + i, chunk_buffer[i]);
-                    POKE(0xC800 + i, chunk_buffer[i]);
-                }
-            } else {
-                for (uint16_t i = 0; i < lut_length; i++) {
-                    POKE(0xC400 + i, chunk_buffer[i]);
-                    POKE(0xCC00 + i, chunk_buffer[i]);
-                }
-            }
-            // for (uint16_t i = 0; i < ch->chunkLength; i++) {
-            //     POKE(0xC000 + i, chunk_buffer[i]);
+            // uint16_t lut_length = ch->chunkLength / 2;
+            // if (ch->chunkID == 0) {
+            //     for (uint16_t i = 0; i < lut_length; i++) {
+            //         POKE(0xC000 + i, chunk_buffer[i]);
+            //         POKE(0xC800 + i, chunk_buffer[i]);
+            //     }
+            // } else {
+            //     for (uint16_t i = 0; i < lut_length; i++) {
+            //         POKE(0xC400 + i, chunk_buffer[i]);
+            //         POKE(0xCC00 + i, chunk_buffer[i]);
+            //     }
             // }
-            // for (uint16_t i = 0; i < ch->chunkLength; i++) {
-            //     POKE(0xC800 + i, chunk_buffer[i]);
-            // }                
+            for (uint16_t i = 0; i < ch->chunkLength; i++) {
+                POKE(0xC000 + i, chunk_buffer[i]);
+            }
+            for (uint16_t i = 0; i < ch->chunkLength; i++) {
+                POKE(0xC800 + i, chunk_buffer[i]);
+            }                
             POKE(MMU_IO_CTRL, 0x00);  // IO PAGE 0
             break;
         default:

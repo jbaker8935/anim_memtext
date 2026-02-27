@@ -404,6 +404,7 @@ __attribute((noinline)) uint8_t play_animation(char *anim_filename, char *mp3_fi
                 anim_started = true;
                 POKE(VKY_MSTR_CTRL_1, 0x40);  // ENABLE MEMTEXT OVERRIDE BLOCK MODE
                 // test_color_lut();
+                // getchar();
                 break;
             case 0x01:
                 result = processTextColorLUT(&fao, &chunkHeader);
