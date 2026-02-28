@@ -262,11 +262,15 @@ int processTextColorLUT(fat32_file_t *f, FAOChunkHeader *ch) {
             //         POKE(0xCC00 + i, chunk_buffer[i]);
             //     }
             // }
-            for (uint16_t i = 0; i < ch->chunkLength; i++) {
+            // write to foreground bank 0 and 1.
+            for (uint16_t i = 0; i < 1024; i++) {
                 POKE(0xC000 + i, chunk_buffer[i]);
+                POKE(0xC400 + i, chunk_buffer[i]);                
             }
-            for (uint16_t i = 0; i < ch->chunkLength; i++) {
-                POKE(0xC800 + i, chunk_buffer[i]);
+            // write to background bank 0 and 1.
+            for (uint16_t i = 1024, j=0; i < 2048; i++, j++) {
+                POKE(0xC800 + j, chunk_buffer[i]);
+                POKE(0xCC00 + j, chunk_buffer[i]);                
             }                
             POKE(MMU_IO_CTRL, 0x00);  // IO PAGE 0
             break;
