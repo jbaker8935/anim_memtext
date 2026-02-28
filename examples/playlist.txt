@@ -10,7 +10,6 @@ color_surf2.bin
 surf_images.bin
 teahupoo_1.bin
 teahupoo_2.bin
-teahupoo_0.bin
 ba_memtext.bin ba64.mp3
 ricka.bin ricka64.mp3
 spider.bin
