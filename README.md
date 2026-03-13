@@ -20,4 +20,5 @@ TODOs:
 
 NEW:
 - added support for future frame mode color double buffering
+- added xiph.org Derf’s Test Media Collection test video encodings
 
