@@ -8,8 +8,6 @@ football.bin
 foreman.bin
 waterfall.bin
 color_face.bin
-dance_1.bin
-dance_2.bin
 ai_surf_1.bin
 ai_surf_2.bin
 ai_surf_3.bin
